@@ -9,8 +9,13 @@ import streamlit as st
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-DEFAULT_PAYROLL_PATH = Path(r"C:\Users\Pooja\Downloads\Payroll_System_Export.csv")
-DEFAULT_HR_PATH = Path(r"C:\Users\Pooja\Downloads\HR_Master_System_Export.csv")
+APP_DIR = Path(__file__).resolve().parent
+DEFAULT_PAYROLL_FILENAME = "Payroll_System_Export.csv"
+DEFAULT_HR_FILENAME = "HR_Master_System_Export.csv"
+STATIC_PAYROLL_PATH = APP_DIR / DEFAULT_PAYROLL_FILENAME
+STATIC_HR_PATH = APP_DIR / DEFAULT_HR_FILENAME
+LOCAL_PAYROLL_PATH = Path(r"C:\Users\Pooja\Documents\Codex\2026-04-20-files-mentioned-by-the-user-payroll\Static\Payroll_System_Export.csv")
+LOCAL_HR_PATH = Path(r"C:\Users\Pooja\Documents\Codex\2026-04-20-files-mentioned-by-the-user-payroll\Static\HR_Master_System_Export.csv")
 
 KEY_COLUMN = "Employee_ID"
 COMPARE_FIELDS = [
@@ -75,15 +80,31 @@ def normalize_value(field: str, value: object) -> str:
     return normalize_text(value)
 
 
-def load_csv(uploaded_file, default_path: Path, label: str) -> pd.DataFrame:
-    if uploaded_file is not None:
-        return pd.read_csv(uploaded_file, dtype=str).fillna("")
+def default_candidates(file_name: str, local_path: Path) -> list[Path]:
+    return [
+        APP_DIR / file_name,
+        local_path,
+    ]
 
-    if default_path.exists():
-        return pd.read_csv(default_path, dtype=str).fillna("")
+
+def find_existing_default_path(file_name: str, local_path: Path) -> Path | None:
+    for path in default_candidates(file_name, local_path):
+        if path.exists():
+            return path
+    return None
+
+
+def load_csv(uploaded_file, file_name: str, local_path: Path, label: str) -> tuple[pd.DataFrame, str]:
+    if uploaded_file is not None:
+        return pd.read_csv(uploaded_file, dtype=str).fillna(""), f"uploaded {label} file"
+
+    default_path = find_existing_default_path(file_name, local_path)
+    if default_path is not None:
+        return pd.read_csv(default_path, dtype=str).fillna(""), f"default file at {default_path}"
 
     raise FileNotFoundError(
-        f"{label} file was not uploaded and default path does not exist: {default_path}"
+        f"{label} file was not uploaded and no bundled default file was found. "
+        f"Expected one of: {', '.join(str(path) for path in default_candidates(file_name, local_path))}"
     )
 
 
@@ -321,11 +342,23 @@ def display_metrics(summary_df: pd.DataFrame) -> None:
 
 def default_file_message() -> str:
     messages: list[str] = []
-    if DEFAULT_PAYROLL_PATH.exists():
-        messages.append(f"Payroll default: `{DEFAULT_PAYROLL_PATH}`")
-    if DEFAULT_HR_PATH.exists():
-        messages.append(f"HR default: `{DEFAULT_HR_PATH}`")
-    return " | ".join(messages) if messages else "Upload both files to run the reconciliation."
+    if STATIC_PAYROLL_PATH.exists():
+        messages.append(f"Payroll default: `{STATIC_PAYROLL_PATH}`")
+    elif LOCAL_PAYROLL_PATH.exists():
+        messages.append(f"Payroll local fallback: `{LOCAL_PAYROLL_PATH}`")
+
+    if STATIC_HR_PATH.exists():
+        messages.append(f"HR default: `{STATIC_HR_PATH}`")
+    elif LOCAL_HR_PATH.exists():
+        messages.append(f"HR local fallback: `{LOCAL_HR_PATH}`")
+
+    if messages:
+        return " | ".join(messages)
+    return (
+        "Upload both files, or place "
+        f"`{DEFAULT_PAYROLL_FILENAME}` and `{DEFAULT_HR_FILENAME}` in `{APP_DIR}` "
+        "to let users run reconciliation without uploading."
+    )
 
 
 def main() -> None:
@@ -348,13 +381,27 @@ def main() -> None:
         return
 
     try:
-        payroll_df = prepare_dataframe(load_csv(payroll_upload, DEFAULT_PAYROLL_PATH, "Payroll"), "Payroll")
-        hr_df = prepare_dataframe(load_csv(hr_upload, DEFAULT_HR_PATH, "HR"), "HR")
+        payroll_raw_df, payroll_source = load_csv(
+            payroll_upload,
+            DEFAULT_PAYROLL_FILENAME,
+            LOCAL_PAYROLL_PATH,
+            "Payroll",
+        )
+        hr_raw_df, hr_source = load_csv(
+            hr_upload,
+            DEFAULT_HR_FILENAME,
+            LOCAL_HR_PATH,
+            "HR",
+        )
+        payroll_df = prepare_dataframe(payroll_raw_df, "Payroll")
+        hr_df = prepare_dataframe(hr_raw_df, "HR")
         summary_df, detail_df = build_reconciliation(hr_df, payroll_df)
         excel_report = create_excel_report(summary_df, detail_df)
     except Exception as exc:
         st.error(f"Unable to complete reconciliation: {exc}")
         return
+
+    st.success(f"Using {payroll_source} and {hr_source}.")
 
     display_metrics(summary_df)
 
