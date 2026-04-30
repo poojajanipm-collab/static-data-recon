@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.idea/
+.DS_Store
+.streamlit/secrets.toml
+output/
+exports/
+*.xlsx
+*.csv
+*.log
+!Payroll_System_Export.csv
+!HR_Master_System_Export.csv
